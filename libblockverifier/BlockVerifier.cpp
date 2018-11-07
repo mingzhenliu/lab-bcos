@@ -20,58 +20,92 @@
  */
 #include "BlockVerifier.h"
 #include "ExecutiveContext.h"
+#include <libethcore/Exceptions.h>
 #include <libethcore/PrecompiledContract.h>
 #include <libethcore/TransactionReceipt.h>
-#include <libexecutivecontext/ExecutionResult.h>
-#include <libexecutivecontext/Executive.h>
+#include <libexecutive/ExecutionResult.h>
+#include <libexecutive/Executive.h>
 #include <exception>
 using namespace dev;
 using namespace std;
 using namespace dev::eth;
 using namespace dev::blockverifier;
+using namespace dev::executive;
 
-ExecutiveContext::Ptr BlockVerifier::executeBlock(Block& block)
+ExecutiveContext::Ptr BlockVerifier::executeBlock(Block& block, h256 const& parentStateRoot)
 {
-    LOG(TRACE) << "BlockVerifier::executeBlock tx_num=" << block.transactions().size();
+    LOG(TRACE) << "BlockVerifier::executeBlock tx_num=" << block.transactions().size()
+               << " hash: " << block.blockHeader().hash()
+               << " num: " << block.blockHeader().number()
+               << " stateRoot: " << block.blockHeader().stateRoot()
+               << " parentStateRoot: " << parentStateRoot << std::endl;
     ExecutiveContext::Ptr executiveContext = std::make_shared<ExecutiveContext>();
     try
     {
         BlockInfo blockInfo;
         blockInfo.hash = block.blockHeader().hash();
         blockInfo.number = block.blockHeader().number();
-        executiveContext->setPrecompiledContract(m_precompiledContract);
-        m_executiveContextFactory->initExecutiveContext(blockInfo, executiveContext);
+        m_executiveContextFactory->initExecutiveContext(
+            blockInfo, parentStateRoot, executiveContext);
     }
     catch (exception& e)
     {
         LOG(ERROR) << "Error:" << e.what();
     }
     unsigned i = 0;
+    BlockHeader tmpHeader = block.blockHeader();
+    block.clearAllReceipts();
     for (Transaction const& tr : block.transactions())
     {
-        try
+        EnvInfo envInfo(block.blockHeader(), m_pNumberHash,
+            block.getTransactionReceipts().size() > 0 ?
+                block.getTransactionReceipts().back().gasUsed() :
+                0);
+        envInfo.setPrecompiledEngine(executiveContext);
+        std::pair<ExecutionResult, TransactionReceipt> resultReceipt =
+            execute(envInfo, tr, OnOpFunc(), executiveContext);
+        block.appendTransactionReceipt(resultReceipt.second);
+        executiveContext->getState()->commit();
+    }
+    block.calReceiptRoot();
+    block.header().setStateRoot(executiveContext->getState()->rootHash());
+    if (tmpHeader.receiptsRoot() != h256() && tmpHeader.stateRoot() != h256())
+    {
+        if (tmpHeader != block.blockHeader())
         {
-            EnvInfo envInfo(block.blockHeader(), m_pNumberHash,
-                block.getTransactionReceipts().back().gasUsed());
-            envInfo.setPrecompiledEngine(executiveContext);
-            std::pair<ExecutionResult, TransactionReceipt> resultReceipt =
-                execute(envInfo, tr, OnOpFunc(), executiveContext);
-            block.appendTransactionReceipt(resultReceipt.second);
-        }
-        catch (Exception& ex)
-        {
-            ex << errinfo_transactionIndex(i);
-            throw;
+            BOOST_THROW_EXCEPTION(InvalidBlockWithBadStateOrReceipt() << errinfo_comment(
+                                      "Invalid Block with bad stateRoot or ReciptRoot"));
         }
     }
     return executiveContext;
 }
 
+std::pair<ExecutionResult, TransactionReceipt> BlockVerifier::executeTransaction(
+    const BlockHeader& blockHeader, dev::eth::Transaction const& _t)
+{
+    ExecutiveContext::Ptr executiveContext = std::make_shared<ExecutiveContext>();
+    try
+    {
+        BlockInfo blockInfo;
+        blockInfo.hash = blockHeader.hash();
+        blockInfo.number = blockHeader.number();
+        m_executiveContextFactory->initExecutiveContext(
+            blockInfo, blockHeader.stateRoot(), executiveContext);
+    }
+    catch (exception& e)
+    {
+        LOG(ERROR) << "Error:" << e.what();
+    }
+
+    EnvInfo envInfo(blockHeader, m_pNumberHash, 0);
+    envInfo.setPrecompiledEngine(executiveContext);
+    return execute(envInfo, _t, OnOpFunc(), executiveContext);
+}
 
 std::pair<ExecutionResult, TransactionReceipt> BlockVerifier::execute(EnvInfo const& _envInfo,
     Transaction const& _t, OnOpFunc const& _onOp, ExecutiveContext::Ptr executiveContext)
 {
-    LOG(TRACE) << "State::execute ";
+    LOG(TRACE) << "BlockVerifier::execute ";
 
     auto onOp = _onOp;
 #if ETH_VMTRACE
@@ -82,7 +116,7 @@ std::pair<ExecutionResult, TransactionReceipt> BlockVerifier::execute(EnvInfo co
 
     // Create and initialize the executive. This will throw fairly cheaply and quickly if the
     // transaction is bad in any way.
-    Executive e(*(executiveContext->getState()), _envInfo);
+    Executive e(executiveContext->getState(), _envInfo);
     ExecutionResult res;
     e.setResultRecipient(res);
     e.initialize(_t);
@@ -95,5 +129,5 @@ std::pair<ExecutionResult, TransactionReceipt> BlockVerifier::execute(EnvInfo co
 
     return make_pair(res,
         TransactionReceipt(executiveContext->getState()->rootHash(), startGasUsed + e.gasUsed(),
-            e.logs(), e.status(), e.output().takeBytes(), e.newAddress()));
+            e.logs(), e.status(), e.takeOutput().takeBytes(), e.newAddress()));
 }

@@ -78,6 +78,8 @@ DEV_SIMPLE_EXCEPTION(InvalidReceiptsStateRoot);
 DEV_SIMPLE_EXCEPTION(StateTrieReconstructionFailed);
 DEV_SIMPLE_EXCEPTION(InvalidStateChunkData);
 DEV_SIMPLE_EXCEPTION(InvalidBlockChunkData);
+DEV_SIMPLE_EXCEPTION(InvalidAccountStartNonceInState);
+DEV_SIMPLE_EXCEPTION(IncorrectAccountStartNonceInState);
 
 /// block && block header related
 DEV_SIMPLE_EXCEPTION(InvalidBlockNonce);
@@ -90,10 +92,16 @@ DEV_SIMPLE_EXCEPTION(GenesisBlockCannotBeCalculated);
 DEV_SIMPLE_EXCEPTION(InvalidLogBloom);
 DEV_SIMPLE_EXCEPTION(InvalidBlockFormat);
 DEV_SIMPLE_EXCEPTION(InvalidBlockHeaderItemCount);
+DEV_SIMPLE_EXCEPTION(InvalidBlockWithBadStateOrReceipt);
 
 /// transactionReceipt related
 DEV_SIMPLE_EXCEPTION(InvalidTransactionReceiptFormat);
 DEV_SIMPLE_EXCEPTION(TransactionReceiptVersionError);
+
+/// sync related
+DEV_SIMPLE_EXCEPTION(InvalidBlockDownloadQueuePiorityInput);
+DEV_SIMPLE_EXCEPTION(InvalidSyncPeerCreation);
+
 
 /// common exceptions
 DEV_SIMPLE_EXCEPTION(InvalidNonce);

@@ -86,11 +86,9 @@ void Service::asyncSendMessageByNodeID(
         auto s = m_host->sessions();
         for (auto const& i : s)
         {
-            LOG(INFO) << "Service::asyncSendMessageByNodeID traversed nodeID = " << toJS(i.first);
             if (i.first == nodeID)
             {
                 std::shared_ptr<SessionFace> p = i.second;
-                LOG(INFO) << "Service::asyncSendMessageByNodeID get session success.";
                 uint32_t seq = ++m_seq;
                 if (callback)
                 {
@@ -429,7 +427,7 @@ void Service::asyncBroadcastMessage(Message::Ptr message, Options const& options
     }
 }
 
-void Service::registerHandlerByProtoclID(int16_t protocolID, CallbackFuncWithSession handler)
+void Service::registerHandlerByProtoclID(PROTOCOL_ID protocolID, CallbackFuncWithSession handler)
 {
     m_p2pMsgHandler->addProtocolID2Handler(protocolID, handler);
 }
@@ -445,44 +443,53 @@ void Service::registerHandlerByTopic(std::string const& topic, CallbackFuncWithS
         registerHandlerByProtoclID(dev::eth::ProtocolID::Topic,
             [=](P2PException e, std::shared_ptr<Session> s, Message::Ptr msg) {
                 LOG(INFO) << "Session::onMessage, call callbackFunc by Topic protocolID.";
-
-                ///< Get topic from message buffer.
-                std::shared_ptr<bytes> buffer = std::make_shared<bytes>();
-                std::string topic;
-                msg->decodeAMOPBuffer(buffer, topic);
-                std::shared_ptr<std::vector<std::string>> topics = s->host()->topics();
-
-                ///< This above topic get this node/host attention or not.
-                bool bFind = false;
-                for (size_t i = 0; i < topics->size(); i++)
+                if (msg->buffer()->size() <= Message::MAX_LENGTH)
                 {
-                    if (topic == (*topics)[i])
+                    ///< Get topic from message buffer.
+                    std::shared_ptr<bytes> buffer = std::make_shared<bytes>();
+                    std::string topic;
+                    msg->decodeAMOPBuffer(buffer, topic);
+                    std::shared_ptr<std::vector<std::string>> topics = s->host()->topics();
+
+                    ///< This above topic get this node/host attention or not.
+                    bool bFind = false;
+                    for (size_t i = 0; i < topics->size(); i++)
                     {
-                        bFind = true;
-                        break;
+                        if (topic == (*topics)[i])
+                        {
+                            bFind = true;
+                            break;
+                        }
                     }
-                }
 
-                if (bFind)
-                {
-                    CallbackFuncWithSession callbackFunc;
-
-                    bool ret = m_p2pMsgHandler->getHandlerByTopic(topic, callbackFunc);
-                    if (ret && callbackFunc)
+                    if (bFind)
                     {
-                        LOG(INFO) << "Session::onMessage, call callbackFunc by topic=" << topic;
-                        ///< execute funtion, send response packet by user in callbackFunc
-                        ///< TODO: use threadPool
-                        callbackFunc(e, s, msg);
+                        CallbackFuncWithSession callbackFunc;
+
+                        bool ret = m_p2pMsgHandler->getHandlerByTopic(topic, callbackFunc);
+                        if (ret && callbackFunc)
+                        {
+                            LOG(INFO) << "Session::onMessage, call callbackFunc by topic=" << topic;
+                            ///< execute funtion, send response packet by user in callbackFunc
+                            ///< TODO: use threadPool
+                            callbackFunc(e, s, msg);
+                        }
+                        else
+                        {
+                            LOG(ERROR)
+                                << "Session::onMessage, handler not found by topic=" << topic;
+                        }
                     }
                     else
                     {
-                        LOG(ERROR) << "Session::onMessage, handler not found by topic=" << topic;
+                        LOG(ERROR)
+                            << "Session::onMessage, topic donot get this node/host attention.";
                     }
                 }
                 else
                 {
-                    LOG(ERROR) << "Session::onMessage, topic donot get this node/host attention.";
+                    LOG(ERROR) << "Session::onMessage, Packet too large, size:"
+                               << msg->buffer()->size();
                 }
             });
     }
@@ -556,6 +563,39 @@ SessionInfos Service::sessionInfos() const
     {
         LOG(ERROR) << "Service::sessionInfos error:" << e.what();
     }
+    return infos;
+}
+
+SessionInfos Service::sessionInfosByProtocolID(PROTOCOL_ID _protocolID) const
+{
+    std::pair<GROUP_ID, MODULE_ID> ret = getGroupAndProtocol(_protocolID);
+    h512s nodeList;
+    SessionInfos infos;
+
+    if (true == m_host->getNodeListByGroupID(int(ret.first), nodeList))
+    {
+        LOG(INFO) << "Service::sessionInfosByProtocolID, getNodeListByGroupID list size:"
+                  << nodeList.size();
+        try
+        {
+            RecursiveGuard l(m_host->mutexSessions());
+            auto s = m_host->sessions();
+            for (auto const& i : s)
+            {
+                if (find(nodeList.begin(), nodeList.end(), i.first) != nodeList.end())
+                {
+                    infos.push_back(
+                        SessionInfo(i.first, i.second->nodeIPEndpoint(), *(i.second->topics())));
+                }
+            }
+        }
+        catch (std::exception& e)
+        {
+            LOG(ERROR) << "Service::sessionInfosByProtocolID error:" << e.what();
+        }
+    }
+
+    LOG(INFO) << "Service::sessionInfosByProtocolID, return list size:" << infos.size();
     return infos;
 }
 

@@ -26,6 +26,7 @@
 #include <json/json.h>
 #include <leveldb/db.h>
 #include <libdevcore/FixedHash.h>
+#include <libdevcore/Guards.h>
 namespace dev
 {
 namespace storage
@@ -37,7 +38,6 @@ public:
 
     virtual ~LevelDBStorage(){};
 
-    virtual TableInfo::Ptr info(const std::string& table) override;
     virtual Entries::Ptr select(
         h256 hash, int num, const std::string& table, const std::string& key) override;
     virtual size_t commit(
@@ -48,6 +48,7 @@ public:
 
 private:
     std::shared_ptr<leveldb::DB> m_db;
+    dev::SharedMutex m_remoteDBMutex;
 };
 
 }  // namespace storage

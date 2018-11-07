@@ -31,6 +31,7 @@
 #include "SessionFace.h"
 #include "Socket.h"
 #include <libdevcore/Guards.h>
+#include <libdevcore/ThreadPool.h>
 #include <libdevcore/Worker.h>
 #include <libdevcrypto/Common.h>
 #include <libdevcrypto/ECDHE.h>
@@ -58,7 +59,7 @@ public:
     /// keypair and network config
     Host(std::string const& _clientVersion, KeyPair const& _alias, NetworkConfig const& _n,
         shared_ptr<AsioInterface>& _asioInterface, shared_ptr<SocketFactory>& _socketFactory,
-        shared_ptr<SessionFactory>& _sessionFactory);
+        shared_ptr<SessionFactory>& _sessionFactory, shared_ptr<ba::ssl::context> _sslContext);
     virtual ~Host();
 
     /// ------get interfaces ------
@@ -85,6 +86,7 @@ public:
     size_t peerCount() const;
     /// get session map
     std::unordered_map<NodeID, std::shared_ptr<SessionFace>>& sessions() { return m_sessions; }
+
     /// get mutex of sessions
     RecursiveMutex& mutexSessions() { return x_sessions; }
     /// get m_staticNodes
@@ -142,9 +144,12 @@ public:
     {
         m_staticNodes = staticNodes;
     }
-
     /// set max peer counts
     void setMaxPeerCount(unsigned max_peer_count) { m_maxPeerCount = max_peer_count; }
+    virtual void setThreadPool(std::shared_ptr<dev::ThreadPool> threadPool)
+    {
+        m_threadPool = threadPool;
+    }
 
     ///------ Network and worker threads related ------
     /// the working entry of libp2p(called by when init FISCO-BCOS to start the p2p network)
@@ -215,10 +220,41 @@ public:
         m_topics = _topics;
         m_topicSeq++;
     }
+
     std::shared_ptr<std::vector<std::string>> topics() const { return m_topics; };
     uint32_t topicSeq() const { return m_topicSeq; }
 
     shared_ptr<AsioInterface> const& asioInterface() const { return m_asioInterface; }
+
+    void setGroupID2NodeList(std::map<GROUP_ID, h512s> const& _groupID2NodeList)
+    {
+        if (m_groupID2NodeList.find(0) != m_groupID2NodeList.end())
+        {
+            HOST_LOG(WARNING) << "[#setGroupID2NodeList] groupID can not be 0" << std::endl;
+            return;
+        }
+        m_groupID2NodeList = _groupID2NodeList;
+    }
+
+    ///< If I joined this group, return true and node members for this group.
+    ///< If didnot, return false.
+    bool getNodeListByGroupID(GROUP_ID const& _groupID, h512s& _nodeList) const
+    {
+        std::map<GROUP_ID, h512s>::const_iterator it = m_groupID2NodeList.find(_groupID);
+        if (it == m_groupID2NodeList.end())
+        {
+            return false;
+        }
+        _nodeList = it->second;
+        return true;
+    }
+
+    MessageFactory::Ptr messageFactory() { return m_messageFactory; }
+
+    void setMessageFactory(MessageFactory::Ptr _messageFactory)
+    {
+        m_messageFactory = _messageFactory;
+    }
 
 protected:  /// protected functions
     /// called by 'startedWorking' to accept connections
@@ -262,6 +298,7 @@ protected:  /// protected functions
     inline void determinePublic() { m_tcpPublic = Network::determinePublic(m_netConfigs); }
 
     void sendTopicSeq();
+    void updateStaticNodes(std::shared_ptr<SocketFace> const& _s, NodeID const& nodeId);
 
 protected:  /// protected members(for unit testing)
     /// values inited by contructor
@@ -290,6 +327,7 @@ protected:  /// protected members(for unit testing)
     shared_ptr<AsioInterface> m_asioInterface;
     shared_ptr<SocketFactory> m_socketFactory;
     shared_ptr<SessionFactory> m_sessionFactory;
+    shared_ptr<ba::ssl::context> m_sslContext;
 
     bool m_run = false;
     ///< Start/stop mutex.(mutex for m_run)
@@ -334,8 +372,16 @@ protected:  /// protected members(for unit testing)
     ///< m_topicSeq.
     uint32_t m_topicSeq;
 
+    std::shared_ptr<dev::ThreadPool> m_threadPool;
     ///< Topics being concerned by myself
     std::shared_ptr<std::vector<std::string>> m_topics;
+
+    ///< key is the group that the node joins
+    ///< value is the list of node members for the group
+    ///< the data is currently statically loaded and not synchronized between nodes
+    std::map<GROUP_ID, h512s> m_groupID2NodeList;
+
+    MessageFactory::Ptr m_messageFactory;
 };
 }  // namespace p2p
 

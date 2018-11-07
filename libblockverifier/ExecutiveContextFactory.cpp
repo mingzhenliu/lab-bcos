@@ -6,19 +6,11 @@
 
 using namespace dev;
 using namespace dev::blockverifier;
+using namespace dev::executive;
 
 void ExecutiveContextFactory::initExecutiveContext(
-    BlockInfo blockInfo, ExecutiveContext::Ptr context)
+    BlockInfo blockInfo, h256 stateRoot, ExecutiveContext::Ptr context)
 {
-#if 0
-	dev::storage::AMOPStorage::Ptr stateStorage = std::make_shared<dev::storage::AMOPStorage>();
-	stateStorage->setChannelRPCServer(_channelRPCServer);
-	//stateStorage->setBlockHash(blockInfo.hash);
-	//stateStorage->setNum(blockInfo.number.convert_to<int>());
-	stateStorage->setTopic(_AMOPDBTopic);
-	stateStorage->setMaxRetry(_maxRetry);
-#endif
-
     // DBFactoryPrecompiled
     dev::storage::MemoryTableFactory::Ptr memoryTableFactory =
         std::make_shared<dev::storage::MemoryTableFactory>();
@@ -32,8 +24,11 @@ void ExecutiveContextFactory::initExecutiveContext(
     context->setAddress2Precompiled(Address(0x1001), tableFactoryPrecompiled);
     context->setAddress2Precompiled(
         Address(0x1002), std::make_shared<dev::blockverifier::CRUDPrecompiled>());
+    context->setMemoryTableFactory(memoryTableFactory);
 
     context->setBlockInfo(blockInfo);
+    context->setPrecompiledContract(m_precompiledContract);
+    context->setState(m_stateFactoryInterface->getState(stateRoot, memoryTableFactory));
 }
 
 void ExecutiveContextFactory::setStateStorage(dev::storage::Storage::Ptr stateStorage)
@@ -41,7 +36,8 @@ void ExecutiveContextFactory::setStateStorage(dev::storage::Storage::Ptr stateSt
     m_stateStorage = stateStorage;
 }
 
-void ExecutiveContextFactory::setOverlayDB(OverlayDB& db)
+void ExecutiveContextFactory::setStateFactory(
+    std::shared_ptr<dev::executive::StateFactoryInterface> stateFactoryInterface)
 {
-    m_db = db;
+    m_stateFactoryInterface = stateFactoryInterface;
 }

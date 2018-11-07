@@ -27,6 +27,10 @@
 #include <libdevcrypto/Common.h>
 #include <libethcore/Block.h>
 #include <libethcore/Exceptions.h>
+#define PBFTENGINE_LOG(LEVEL) LOG(LEVEL) << "[#PBFTENGINE] [PROTOCOL: " << m_protocolId << "] "
+#define PBFTSEALER_LOG(LEVEL) \
+    LOG(LEVEL) << "[#PBFTSEALER] [PROTOCOL: " << m_pbftEngine->protocolId() << "] "
+#define PBFTReqCache_LOG(LEVEL) LOG(LEVEL) << "[#PBFTREQCACHE] [PROTOCOL: " << m_protocolId << "] "
 namespace dev
 {
 namespace consensus
@@ -142,13 +146,13 @@ struct PBFTMsg
         sig2 = signHash(fieldsWithoutBlock(), _keyPair);
     }
 
-    bool operator==(PBFTMsg const& req)
+    bool operator==(PBFTMsg const& req) const
     {
         return height == req.height && view == req.view && timestamp == req.timestamp &&
                block_hash == req.block_hash && sig == req.sig && sig2 == req.sig2;
     }
 
-    bool operator!=(PBFTMsg const& req) { return !operator==(req); }
+    bool operator!=(PBFTMsg const& req) const { return !operator==(req); }
     /**
      * @brief: encode the PBFTMsg into bytes
      * @param encodedBytes: the encoded bytes of specified PBFTMsg
@@ -241,13 +245,14 @@ struct PrepareReq : public PBFTMsg
     bytes block;
     /// execution result of block(save the execution result temporarily)
     /// no need to send or receive accross the network
-    dev::blockverifier::ExecutiveContext::Ptr p_execContext;
+    dev::blockverifier::ExecutiveContext::Ptr p_execContext = nullptr;
     /// default constructor
     PrepareReq() = default;
     PrepareReq(KeyPair const& _keyPair, int64_t const& _height, u256 const& _view, u256 const& _idx,
         h256 const _blockHash)
       : PBFTMsg(_keyPair, _height, _view, _idx, _blockHash), p_execContext(nullptr)
     {}
+
     /**
      * @brief: populate the prepare request from specified prepare request,
      *         given view and node index
@@ -277,8 +282,8 @@ struct PrepareReq : public PBFTMsg
      * @param _view : current view
      * @param _idx : index of the node that generates this PrepareReq
      */
-    PrepareReq(
-        dev::eth::Block& blockStruct, KeyPair const& keyPair, u256 const& _view, u256 const& _idx)
+    PrepareReq(dev::eth::Block const& blockStruct, KeyPair const& keyPair, u256 const& _view,
+        u256 const& _idx)
     {
         height = blockStruct.blockHeader().number();
         view = _view;
@@ -297,17 +302,26 @@ struct PrepareReq : public PBFTMsg
      * @param sealing : object contains both block and block-execution-result
      * @param keyPair : keypair used to sign for the PrepareReq
      */
-    void updatePrepareReq(Sealing& sealing, KeyPair const& keyPair)
+    PrepareReq(PrepareReq const& req, Sealing const& sealing, KeyPair const& keyPair)
     {
+        height = req.height;
+        view = req.view;
+        idx = req.idx;
+        p_execContext = sealing.p_execContext;
+        sealing.block.encode(block);
         timestamp = u256(utcTime());
         block_hash = sealing.block.blockHeader().hash();
         sig = signHash(block_hash, keyPair);
         sig2 = signHash(fieldsWithoutBlock(), keyPair);
-        sealing.block.encode(block);
-        p_execContext = sealing.p_execContext;
         LOG(DEBUG) << "Re-generate prepare_requests since block has been executed, time = "
-                   << timestamp;
+                   << timestamp << " , block_hash: " << toHex(block_hash) << std::endl;
     }
+
+    bool operator==(PrepareReq const& req) const
+    {
+        return PBFTMsg::operator==(req) && req.block == block;
+    }
+    bool operator!=(PrepareReq const& req) const { return !(operator==(req)); }
 
     /// trans PrepareReq from object to RLPStream
     virtual void streamRLPFields(RLPStream& _s) const
@@ -393,7 +407,7 @@ struct ViewChangeReq : public PBFTMsg
      * @param _idx: index of the node that generates this ViewChangeReq
      * @param _hash: block hash
      */
-    ViewChangeReq(KeyPair const& keyPair, uint64_t const& _height, u256 const _view,
+    ViewChangeReq(KeyPair const& keyPair, int64_t const& _height, u256 const _view,
         u256 const& _idx, h256 const& _hash)
     {
         height = _height;

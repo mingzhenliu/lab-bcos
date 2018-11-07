@@ -26,9 +26,9 @@
 #include <libdevcrypto/Common.h>
 #include <libethcore/ChainOperationParams.h>
 #include <libethcore/PrecompiledContract.h>
-#include <libexecutivecontext/StateFace.h>
+#include <libexecutive/StateFace.h>
+#include <libstorage/MemoryTableFactory.h>
 #include <memory>
-
 namespace dev
 {
 namespace storage
@@ -36,7 +36,7 @@ namespace storage
 class Table;
 }
 
-namespace eth
+namespace executive
 {
 class StateFace;
 }
@@ -68,8 +68,8 @@ public:
     BlockInfo blockInfo() { return m_blockInfo; }
     void setBlockInfo(BlockInfo blockInfo) { m_blockInfo = blockInfo; }
 
-    std::shared_ptr<dev::eth::StateFace> getState();
-    void setState(std::shared_ptr<dev::eth::StateFace> state);
+    std::shared_ptr<dev::executive::StateFace> getState();
+    void setState(std::shared_ptr<dev::executive::StateFace> state);
 
     std::shared_ptr<dev::storage::Table> getTable(const Address& address);
 
@@ -82,12 +82,26 @@ public:
     void setPrecompiledContract(
         std::unordered_map<Address, dev::eth::PrecompiledContract> const& precompiledContract);
 
+    void dbCommit();
+
+    void setMemoryTableFactory(std::shared_ptr<dev::storage::MemoryTableFactory> memoryTableFactory)
+    {
+        m_memoryTableFactory = memoryTableFactory;
+    }
+
+    std::shared_ptr<dev::storage::MemoryTableFactory> getMemoryTableFactory()
+    {
+        return m_memoryTableFactory;
+    }
+
+
 private:
     std::unordered_map<Address, Precompiled::Ptr> m_address2Precompiled;
     int m_addressCount = 0x10000;
     BlockInfo m_blockInfo;
-    std::shared_ptr<dev::eth::StateFace> m_stateFace;
+    std::shared_ptr<dev::executive::StateFace> m_stateFace;
     std::unordered_map<Address, dev::eth::PrecompiledContract> m_precompiledContract;
+    std::shared_ptr<dev::storage::MemoryTableFactory> m_memoryTableFactory;
 };
 
 }  // namespace blockverifier

@@ -70,6 +70,7 @@ struct RLPException : virtual Exception
 
 /// RLP related Exceptions
 DEV_SIMPLE_EXCEPTION_RLP(BadCast);
+DEV_SIMPLE_EXCEPTION_RLP(ErrorBlockHash);
 DEV_SIMPLE_EXCEPTION_RLP(BadRLP);
 DEV_SIMPLE_EXCEPTION_RLP(OversizeRLP);
 DEV_SIMPLE_EXCEPTION_RLP(UndersizeRLP);
@@ -89,8 +90,9 @@ DEV_SIMPLE_EXCEPTION(WrongFieldType);
 DEV_SIMPLE_EXCEPTION(InterfaceNotSupported);
 DEV_SIMPLE_EXCEPTION(ExternalFunctionFailure);
 DEV_SIMPLE_EXCEPTION(ConnectionToSelfException);
-
-
+DEV_SIMPLE_EXCEPTION(InitLedgerConfigFailed);
+DEV_SIMPLE_EXCEPTION(InvalidConsensusType);
+DEV_SIMPLE_EXCEPTION(OpenLevelDBFailed);
 /**
  * @brief : error information to be added to exceptions
  */

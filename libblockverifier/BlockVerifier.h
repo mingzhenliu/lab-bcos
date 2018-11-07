@@ -20,6 +20,7 @@
  */
 #pragma once
 
+#include "BlockVerifierInterface.h"
 #include "ExecutiveContext.h"
 #include "ExecutiveContextFactory.h"
 #include "Precompiled.h"
@@ -28,7 +29,9 @@
 #include <libdevcrypto/Common.h>
 #include <libethcore/Block.h>
 #include <libethcore/Transaction.h>
+#include <libethcore/TransactionReceipt.h>
 #include <libevm/ExtVMFace.h>
+#include <libexecutive/ExecutionResult.h>
 #include <libmptstate/State.h>
 #include <boost/function.hpp>
 #include <memory>
@@ -38,13 +41,19 @@ namespace eth
 {
 class PrecompiledContract;
 class TransactionReceipt;
-class ExecutionResult;
 class LastBlockHashesFace;
 
 }  // namespace eth
+
+namespace executive
+{
+class ExecutionResult;
+}
+
 namespace blockverifier
 {
-class BlockVerifier : public std::enable_shared_from_this<BlockVerifier>
+class BlockVerifier : public BlockVerifierInterface,
+                      public std::enable_shared_from_this<BlockVerifier>
 {
 public:
     typedef std::shared_ptr<BlockVerifier> Ptr;
@@ -53,9 +62,12 @@ public:
 
     virtual ~BlockVerifier(){};
 
-    ExecutiveContext::Ptr executeBlock(dev::eth::Block& block);
+    ExecutiveContext::Ptr executeBlock(dev::eth::Block& block, h256 const& parentStateRoot);
 
-    std::pair<dev::eth::ExecutionResult, dev::eth::TransactionReceipt> execute(
+    std::pair<dev::executive::ExecutionResult, dev::eth::TransactionReceipt> executeTransaction(
+        const dev::eth::BlockHeader& blockHeader, dev::eth::Transaction const& _t);
+
+    std::pair<dev::executive::ExecutionResult, dev::eth::TransactionReceipt> execute(
         dev::eth::EnvInfo const& _envInfo, dev::eth::Transaction const& _t,
         dev::eth::OnOpFunc const& _onOp,
         dev::blockverifier::ExecutiveContext::Ptr executiveContext);
@@ -65,24 +77,13 @@ public:
     {
         m_executiveContextFactory = executiveContextFactory;
     }
-
     ExecutiveContextFactory::Ptr getExecutiveContextFactory() { return m_executiveContextFactory; }
-
-    void setPrecompiledContract(
-        std::unordered_map<Address, dev::eth::PrecompiledContract> precompiledContract)
+    void setNumberHash(const NumberHashCallBackFunction& _pNumberHash)
     {
-        m_precompiledContract = precompiledContract;
+        m_pNumberHash = _pNumberHash;
     }
-
-    std::unordered_map<Address, dev::eth::PrecompiledContract> getPrecompiledContract()
-    {
-        return m_precompiledContract;
-    }
-
-    void setNumberHash(NumberHashCallBackFunction _pNumberHash) { m_pNumberHash = _pNumberHash; }
 
 private:
-    std::unordered_map<Address, dev::eth::PrecompiledContract> m_precompiledContract;
     ExecutiveContextFactory::Ptr m_executiveContextFactory;
     NumberHashCallBackFunction m_pNumberHash;
 };

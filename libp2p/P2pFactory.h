@@ -21,6 +21,7 @@
  * @date 2018-09-17
  */
 #pragma once
+#include "Common.h"
 #include "Session.h"
 #include "SessionFace.h"
 #include "Socket.h"
@@ -33,12 +34,12 @@ class Host;
 class SocketFactory
 {
 public:
-    virtual std::shared_ptr<SocketFace> create_socket(
-        ba::io_service& _ioService, NodeIPEndpoint _nodeIPEndpoint = NodeIPEndpoint())
+    virtual std::shared_ptr<SocketFace> create_socket(ba::io_service& _ioService,
+        ba::ssl::context& _sslContext, NodeIPEndpoint _nodeIPEndpoint = NodeIPEndpoint())
     {
         /// default create Session
         std::shared_ptr<SocketFace> m_socket =
-            std::make_shared<Socket>(_ioService, _nodeIPEndpoint);
+            std::make_shared<Socket>(_ioService, _sslContext, _nodeIPEndpoint);
         return m_socket;
     }
 };
@@ -48,10 +49,11 @@ class SessionFactory
 public:
     virtual std::shared_ptr<SessionFace> create_session(Host* _server,
         std::shared_ptr<SocketFace> const& _socket, std::shared_ptr<Peer> const& _peer,
-        PeerSessionInfo _info)
+        PeerSessionInfo _info, MessageFactory::Ptr _messageFactory)
     {
         std::shared_ptr<SessionFace> m_session =
             std::make_shared<Session>(_server, _socket, _peer, _info);
+        m_session->setMessageFactory(_messageFactory);
         return m_session;
     }
 };

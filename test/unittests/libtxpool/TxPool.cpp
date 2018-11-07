@@ -35,27 +35,34 @@ namespace test
 BOOST_FIXTURE_TEST_SUITE(TxPoolTest, TestOutputHelperFixture)
 BOOST_AUTO_TEST_CASE(testSessionRead)
 {
-    TxPoolFixture pool_test;
+    TxPoolFixture pool_test(5, 5);
     BOOST_CHECK(!!pool_test.m_txPool);
     BOOST_CHECK(!!pool_test.m_topicService);
     BOOST_CHECK(!!pool_test.m_blockChain);
     ba::io_service m_ioservice(2);
     NodeIPEndpoint m_endpoint(bi::address::from_string("127.0.0.1"), 30303, 30303);
     std::shared_ptr<FakeSocket> fake_socket = std::make_shared<FakeSocket>(m_ioservice, m_endpoint);
-    NodeID m_nodeId = KeyPair::create().pub();
+    /// NodeID m_nodeId = KeyPair::create().pub();
     /// start peer session and doRead
-    BOOST_CHECK_THROW(pool_test.m_host->startPeerSession(m_nodeId, fake_socket), std::exception);
+    // BOOST_REQUIRE_NO_THROW(pool_test.m_host->startPeerSession(m_nodeId, fake_socket));
 }
 
 BOOST_AUTO_TEST_CASE(testImportAndSubmit)
 {
-    TxPoolFixture pool_test;
+    TxPoolFixture pool_test(5, 5);
     BOOST_CHECK(!!pool_test.m_txPool);
     BOOST_CHECK(!!pool_test.m_topicService);
     BOOST_CHECK(!!pool_test.m_blockChain);
+    std::shared_ptr<dev::ThreadPool> threadPool =
+        std::make_shared<dev::ThreadPool>("SessionCallBackThreadPool", 2);
+    pool_test.m_host->setThreadPool(threadPool);
+
     Transactions trans =
         pool_test.m_blockChain->getBlockByHash(pool_test.m_blockChain->numberHash(0))
             ->transactions();
+    trans[0].setBlockLimit(pool_test.m_blockChain->number() + u256(1));
+    Signature sig = sign(pool_test.m_blockChain->m_sec, trans[0].sha3(WithoutSignature));
+    trans[0].updateSignature(SignatureStruct(sig));
     bytes trans_data;
     trans[0].encode(trans_data);
     /// import invalid transaction
@@ -68,17 +75,17 @@ BOOST_AUTO_TEST_CASE(testImportAndSubmit)
     Transactions transaction_vec =
         pool_test.m_blockChain->getBlockByHash(pool_test.m_blockChain->numberHash(0))
             ->transactions();
-    Secret sec = KeyPair::create().secret();
     /// set valid nonce
     size_t i = 0;
     for (auto tx : transaction_vec)
     {
         tx.setNonce(tx.nonce() + u256(i) + u256(1));
+        tx.setBlockLimit(pool_test.m_blockChain->number() + u256(1));
         bytes trans_bytes2;
         tx.encode(trans_bytes2);
         BOOST_CHECK_THROW(pool_test.m_txPool->import(ref(trans_bytes2)), InvalidSignature);
         /// resignature
-        Signature sig = sign(sec, tx.sha3(WithoutSignature));
+        sig = sign(pool_test.m_blockChain->m_sec, tx.sha3(WithoutSignature));
         tx.updateSignature(SignatureStruct(sig));
         tx.encode(trans_bytes2);
         result = pool_test.m_txPool->import(ref(trans_bytes2));
@@ -94,7 +101,8 @@ BOOST_AUTO_TEST_CASE(testImportAndSubmit)
     }
     /// test out of limit, clear the queue
     tx.setNonce(u256(tx.nonce() + u256(10)));
-    Signature sig = sign(sec, tx.sha3(WithoutSignature));
+    tx.setBlockLimit(pool_test.m_blockChain->number() + u256(1));
+    sig = sign(pool_test.m_blockChain->m_sec, tx.sha3(WithoutSignature));
     tx.updateSignature(SignatureStruct(sig));
     tx.encode(trans_data);
     pool_test.m_txPool->setTxPoolLimit(2);
@@ -118,7 +126,8 @@ BOOST_AUTO_TEST_CASE(testImportAndSubmit)
     Transactions top_transactions = pool_test.m_txPool->topTransactions(20);
     BOOST_CHECK(top_transactions.size() == pool_test.m_txPool->pendingSize());
     h256Hash avoid;
-    avoid.insert(pending_list[1].sha3());
+    for (size_t i = 0; i < pool_test.m_txPool->pendingList().size(); i++)
+        avoid.insert(pool_test.m_txPool->pendingList()[i].sha3());
     top_transactions = pool_test.m_txPool->topTransactions(20, avoid);
     BOOST_CHECK(top_transactions.size() == 0);
     /// check getProtocol id

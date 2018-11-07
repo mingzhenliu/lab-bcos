@@ -69,7 +69,7 @@ BlockHeader::BlockHeader(BlockHeader const& _other)
     m_extraData(_other.extraData()),
     m_sealer(_other.sealer()),
     m_sealerList(_other.sealerList()),
-    m_hash(_other.hashRawRead())
+    m_hash(_other.hash())
 {
     assert(*this == _other);
 }
@@ -92,7 +92,7 @@ BlockHeader& BlockHeader::operator=(BlockHeader const& _other)
     m_sealer = _other.sealer();
     m_sealerList = _other.sealerList();
     // equal to m_hash of _other
-    h256 hash = _other.hashRawRead();
+    h256 hash = _other.hash();
     // set the real member of block header with lock protection
     {
         Guard l(m_hashLock);
@@ -236,6 +236,7 @@ void BlockHeader::populateFromParent(BlockHeader const& _parent)
     m_parentHash = _parent.hash();
     m_gasLimit = _parent.m_gasLimit;
     m_gasUsed = u256(0);
+    m_sealer = Invalid256;
     noteDirty();
 }
 
@@ -254,7 +255,7 @@ void BlockHeader::populateFromParent(BlockHeader const& _parent)
 void BlockHeader::verify(Strictness _s, BlockHeader const& _parent, bytesConstRef _block) const
 {
     /// check block number
-    if (m_number >= INT64_MAX || m_number < 0)
+    if (m_number >= MaxBlockNumber || m_number < 0)
     {
         BOOST_THROW_EXCEPTION(InvalidNumber());
     }

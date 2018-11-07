@@ -39,6 +39,7 @@ namespace p2p
 class Service : public P2PInterface, public std::enable_shared_from_this<Service>
 {
 public:
+    ///< _p2pMsgHandler needs to be initialized before _host
     Service(std::shared_ptr<Host> _host, std::shared_ptr<P2PMsgHandler> _p2pMsgHandler)
       : m_host(_host), m_p2pMsgHandler(_p2pMsgHandler)
     {
@@ -53,8 +54,7 @@ public:
     Message::Ptr sendMessageByNodeID(NodeID const& nodeID, Message::Ptr message) override;
 
     void asyncSendMessageByNodeID(NodeID const& nodeID, Message::Ptr message,
-        CallbackFunc callback = [](P2PException e, Message::Ptr msg) {},
-        Options const& options = Options()) override;
+        CallbackFunc callback = nullptr, Options const& options = Options()) override;
 
     Message::Ptr sendMessageByTopic(std::string const& topic, Message::Ptr message) override;
 
@@ -67,7 +67,8 @@ public:
 
     void asyncBroadcastMessage(Message::Ptr message, Options const& options) override;
 
-    void registerHandlerByProtoclID(int16_t protocolID, CallbackFuncWithSession handler) override;
+    void registerHandlerByProtoclID(
+        PROTOCOL_ID protocolID, CallbackFuncWithSession handler) override;
 
     void registerHandlerByTopic(std::string const& topic, CallbackFuncWithSession handler) override;
 
@@ -79,7 +80,28 @@ public:
     ///< Only connected node
     virtual SessionInfos sessionInfos() const override;
 
+    SessionInfos sessionInfosByProtocolID(PROTOCOL_ID _protocolID) const override;
+
     bool isConnected(NodeID const& _nodeID) const override { return m_host->isConnected(_nodeID); }
+
+    std::shared_ptr<Host> host() const { return m_host; }
+
+    void setGroupID2NodeList(std::map<GROUP_ID, h512s> const& _groupID2NodeList) override
+    {
+        m_host->setGroupID2NodeList(_groupID2NodeList);
+    }
+
+    void setTopics(std::shared_ptr<std::vector<std::string>> _topics) override
+    {
+        m_host->setTopics(_topics);
+    }
+
+    std::shared_ptr<std::vector<std::string>> topics() const override { return m_host->topics(); }
+
+    void setMessageFactory(MessageFactory::Ptr _messageFactory)
+    {
+        m_host->setMessageFactory(_messageFactory);
+    }
 
 private:
     void onTimeoutByTopic(const boost::system::error_code& error,

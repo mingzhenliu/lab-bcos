@@ -24,25 +24,51 @@
 
 #include <libethcore/Block.h>
 #include <libethcore/Common.h>
+#include <libethcore/Transaction.h>
 namespace dev
 {
 namespace blockverifier
 {
 class ExecutiveContext;
-}
+}  // namespace blockverifier
 namespace blockchain
 {
+enum class CommitResult
+{
+    OK = 0,             // 0
+    ERROR_NUMBER = -1,  // 1
+    ERROR_PARENT_HASH = -2,
+    ERROR_COMMITTING = -3
+};
 class BlockChainInterface
 {
 public:
     BlockChainInterface() = default;
     virtual ~BlockChainInterface(){};
-    virtual int64_t number() const = 0;
-    virtual dev::h256 numberHash(int64_t _i) const = 0;
+    virtual int64_t number() = 0;
+    virtual dev::h256 numberHash(int64_t _i) = 0;
+    virtual dev::eth::Transaction getTxByHash(dev::h256 const& _txHash) = 0;
+    virtual dev::eth::LocalisedTransaction getLocalisedTxByHash(dev::h256 const& _txHash) = 0;
+    virtual dev::eth::TransactionReceipt getTransactionReceiptByHash(dev::h256 const& _txHash) = 0;
     virtual std::shared_ptr<dev::eth::Block> getBlockByHash(dev::h256 const& _blockHash) = 0;
     virtual std::shared_ptr<dev::eth::Block> getBlockByNumber(int64_t _i) = 0;
-    virtual void commitBlock(
+    virtual CommitResult commitBlock(
         dev::eth::Block& block, std::shared_ptr<dev::blockverifier::ExecutiveContext>) = 0;
+
+    /// set group mark to genesis block
+    virtual void setGroupMark(std::string const& groupMark) = 0;
+
+    /// Register a handler that will be called once there is a new transaction imported
+    template <class T>
+    dev::eth::Handler<> onReady(T const& _t)
+    {
+        return m_onReady.add(_t);
+    }
+
+protected:
+    ///< Called when a subsequent call to import transactions will return a non-empty container. Be
+    ///< nice and exit fast.
+    dev::eth::Signal<> m_onReady;
 };
 }  // namespace blockchain
 }  // namespace dev

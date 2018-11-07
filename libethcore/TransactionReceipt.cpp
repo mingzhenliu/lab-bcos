@@ -32,44 +32,75 @@ TransactionReceipt::TransactionReceipt(bytesConstRef _rlp)
     m_gasUsed = (u256)r[1];
     m_contractAddress = (Address)r[2];
     m_bloom = (LogBloom)r[3];
-    m_status = (unsigned)r[4];
+    m_status = (u256)r[4];
     m_outputBytes = (bytes)r[5];
     for (auto const& i : r[6])
         m_log.emplace_back(i);
 }
 
 TransactionReceipt::TransactionReceipt(h256 _root, u256 _gasUsed, LogEntries const& _log,
-    unsigned _status, bytes _bytes, Address const& _contractAddress)
+    u256 _status, bytes _bytes, Address const& _contractAddress)
 {
     m_stateRoot = (_root);
     m_gasUsed = (_gasUsed);
-    m_bloom = (eth::bloom(_log));
     m_contractAddress = (_contractAddress);
-    m_log = (_log);
+    m_bloom = (eth::bloom(_log));
     m_status = _status;
     m_outputBytes = _bytes;
+    m_log = (_log);
 }
 
 TransactionReceipt::TransactionReceipt(TransactionReceipt const& _other)
   : m_stateRoot(_other.stateRoot()),
     m_gasUsed(_other.gasUsed()),
-    m_bloom(_other.bloom()),
     m_contractAddress(_other.contractAddress()),
-    m_log(_other.log()),
+    m_bloom(_other.bloom()),
     m_status(_other.status()),
-    m_outputBytes(_other.outputBytes())
+    m_outputBytes(_other.outputBytes()),
+    m_log(_other.log())
 {}
 
 void TransactionReceipt::streamRLP(RLPStream& _s) const
 {
     _s.appendList(7) << m_stateRoot << m_gasUsed << m_contractAddress << m_bloom << m_status
                      << m_outputBytes;
-    ;
     _s.appendList(m_log.size());
     for (LogEntry const& l : m_log)
         l.streamRLP(_s);
 }
 
+void TransactionReceipt::decode(bytesConstRef receiptsBytes)
+{
+    RLP const rlp(receiptsBytes);
+    decode(rlp);
+}
+
+void TransactionReceipt::decode(RLP const& r)
+{
+    try
+    {
+        if (!r.isList())
+            BOOST_THROW_EXCEPTION(InvalidTransactionFormat()
+                                  << errinfo_comment("TransactionReceipt RLP must be a list"));
+        m_stateRoot = (h256)r[0];
+        m_gasUsed = (u256)r[1];
+        m_contractAddress = (Address)r[2];
+        m_bloom = (LogBloom)r[3];
+        m_status = (u256)r[4];
+        if (r[5].isData())
+        {
+            m_outputBytes = r[5].toBytes();
+        }
+        for (auto const& i : r[6])
+            m_log.emplace_back(i);
+    }
+    catch (Exception& _e)
+    {
+        _e << errinfo_name(
+            "invalid transaction format: " + toString(r) + " RLP: " + toHex(r.data()));
+        throw;
+    }
+}
 
 std::ostream& dev::eth::operator<<(std::ostream& _out, TransactionReceipt const& _r)
 {

@@ -26,6 +26,7 @@
 #include "Transaction.h"
 #include "TransactionReceipt.h"
 #include <libdevcore/Common.h>
+#include <libdevcore/Guards.h>
 #include <libdevcore/TrieHash.h>
 namespace dev
 {
@@ -42,19 +43,18 @@ public:
     Block(Block const& _block);
     /// assignment operator
     Block& operator=(Block const& _block);
-    ~Block() { resetCurrentBlock(); }
+    ~Block() {}
     ///-----opearator overloads of Block
     /// operator ==
     bool equalAll(Block const& _block) const
     {
-        return m_blockHeader == _block.blockHeader() && m_headerHash == _block.headerHash() &&
-               m_sigList == _block.sigList() && m_transactions == _block.transactions();
+        return m_blockHeader == _block.blockHeader() && m_sigList == _block.sigList() &&
+               m_transactions == _block.transactions();
     }
 
     bool equalWithoutSig(Block const& _block) const
     {
-        return m_blockHeader == _block.blockHeader() && m_headerHash == _block.headerHash() &&
-               m_transactions == _block.transactions();
+        return m_blockHeader == _block.blockHeader() && m_transactions == _block.transactions();
     }
 
     bool equalHeader(Block const& _block) const { return m_blockHeader == _block.blockHeader(); }
@@ -62,14 +62,22 @@ public:
     explicit operator bool() const { return bool(m_blockHeader); }
 
     ///-----encode functions
-    void encode(
-        bytes& _out, bytesConstRef _header, std::vector<std::pair<u256, Signature>>& sig_list);
-    void encode(bytes& _out, bytesConstRef _header) { encode(_out, _header, m_sigList); }
-    void encode(bytes& _out, std::vector<std::pair<u256, Signature>>& sig_list);
-    void encode(bytes& _out) { encode(_out, m_sigList); }
+    /*void encode(bytes& _out, bytesConstRef _header,
+        std::vector<std::pair<u256, Signature>> const& sig_list) const;
+    void encode(bytes& _out, bytesConstRef _header) const { encode(_out, _header, m_sigList); }*/
+    /// void encode(bytes& _out, std::vector<std::pair<u256, Signature>> const& sig_list) const;
+    void encode(bytes& _out) const;
 
     ///-----decode functions
     void decode(bytesConstRef _block);
+
+    /// @returns the RLP serialisation of this block.
+    bytes rlp() const
+    {
+        bytes out;
+        encode(out);
+        return out;
+    }
 
     ///-----get interfaces
     Transactions const& transactions() const { return m_transactions; }
@@ -77,7 +85,7 @@ public:
     Transaction const& transaction(size_t const _index) const { return m_transactions[_index]; }
     BlockHeader const& blockHeader() const { return m_blockHeader; }
     BlockHeader& header() { return m_blockHeader; }
-    h256 const& headerHash() const { return m_headerHash; }
+    h256 headerHash() const { return m_blockHeader.hash(); }
     std::vector<std::pair<u256, Signature>> const& sigList() const { return m_sigList; }
 
     ///-----set interfaces
@@ -91,6 +99,7 @@ public:
     void setTransactionReceipts(TransactionReceipts const& transReceipt)
     {
         m_transactionReceipts = transReceipt;
+        noteChange();
     }
     /// append a single transaction to m_transactions
     void appendTransaction(Transaction const& _trans)
@@ -114,65 +123,77 @@ public:
     }
     /// get hash of block header
     h256 blockHeaderHash() { return m_blockHeader.hash(); }
-    bool isSealed() const { return !m_currentBytes.empty(); }
+    bool isSealed() const { return (m_blockHeader.sealer() != Invalid256); }
     size_t getTransactionSize() const { return m_transactions.size(); }
 
     /// get transactionRoot
-    h256 const getTransactionRoot()
-    {
-        encodeTransactions();
-        return m_txsRoot;
-    }
+    h256 const transactionRoot() { return header().transactionsRoot(); }
+    h256 const receiptRoot() { return header().receiptsRoot(); }
 
-    void resetCurrentBlock()
+    void resetCurrentBlock(BlockHeader& _parent)
     {
-        m_blockHeader = BlockHeader();
+        m_blockHeader.populateFromParent(_parent);
         m_transactions.clear();
         m_transactionReceipts.clear();
         m_sigList.clear();
-        m_currentBytes.clear();
         m_txsCache.clear();
-        m_txsMapCache.clear();
-        m_txsRoot.clear();
+        noteChange();
     }
 
-    void appendTransactionReceipt(TransactionReceipt const& _tran) { m_receipts.push_back(_tran); }
+    void setEmptyBlock()
+    {
+        m_blockHeader.setNumber(0);
+        m_blockHeader.setGasUsed(u256(0));
+        m_blockHeader.setSealer(u256(0));
+        noteChange();
+    }
 
-    const TransactionReceipts& getTransactionReceipts() const { return m_receipts; }
+    void appendTransactionReceipt(TransactionReceipt const& _tran)
+    {
+        m_transactionReceipts.push_back(_tran);
+        noteChange();
+    }
+
+    void clearAllReceipts()
+    {
+        m_transactionReceipts.clear();
+        noteChange();
+    }
+
+    const TransactionReceipts& getTransactionReceipts() const { return m_transactionReceipts; }
+    void calTransactionRoot(bool update = true) const;
+    void calReceiptRoot(bool update = true) const;
 
 private:
-    /// encode function
-    inline void encode(bytes& _out, bytesConstRef block_header, h256 const& hash,
-        std::vector<std::pair<u256, Signature>>& sig_list);
     /// callback this function when transaction has changed
     void noteChange()
     {
         /// RecursiveGuard l(m_txsCacheLock);
+        WriteGuard l_receipt(x_txReceiptsCache);
+        WriteGuard l_txscache(x_txsCache);
         m_txsCache = bytes();
-        m_txsMapCache = BytesMap();
+        m_tReceiptsCache = bytes();
     }
-
-    bytes const& encodeTransactions();
 
 private:
     /// block header of the block (field 0)
-    BlockHeader m_blockHeader;
+    mutable BlockHeader m_blockHeader;
     /// transaction list (field 1)
     Transactions m_transactions;
     TransactionReceipts m_transactionReceipts;
-    /// hash of the block header (field 2)
-    h256 m_headerHash;
     /// sig list (field 3)
     std::vector<std::pair<u256, Signature>> m_sigList;
-    /// bytes for block
-    bytes m_currentBytes;
     /// m_transactions converted bytes, when m_transactions changed,
     /// should refresh this catch when encode
-    bytes m_txsCache;
-    /// mutable RecursiveMutex m_txsCacheLock;
-    TransactionReceipts m_receipts;  ///< The corresponding list of transaction receipts.
-    BytesMap m_txsMapCache;
-    h256 m_txsRoot;
+
+    mutable SharedMutex x_txsCache;
+    mutable bytes m_txsCache;
+
+    mutable SharedMutex x_txReceiptsCache;
+    mutable bytes m_tReceiptsCache;
+
+    mutable dev::h256 m_transRootCache;
+    mutable dev::h256 m_receiptRootCache;
 };
 }  // namespace eth
 }  // namespace dev

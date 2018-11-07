@@ -26,12 +26,17 @@
 #include "TxPoolInterface.h"
 #include <libblockchain/BlockChainInterface.h>
 #include <libdevcore/easylog.h>
+#include <libethcore/Block.h>
 #include <libethcore/Common.h>
 #include <libethcore/Protocol.h>
 #include <libethcore/Transaction.h>
+#include <libp2p/P2PInterface.h>
 #include <libp2p/Service.h>
 using namespace dev::eth;
 using namespace dev::p2p;
+
+#define TXPOOL_LOG(LEVEL) LOG(LEVEL) << "[#TXPOOL] [PROTOCOL: " << m_protocolId << "] "
+
 namespace dev
 {
 namespace txpool
@@ -55,9 +60,9 @@ struct PriorityCompare
 class TxPool : public TxPoolInterface, public std::enable_shared_from_this<TxPool>
 {
 public:
-    TxPool(std::shared_ptr<dev::p2p::Service> _p2pService,
+    TxPool(std::shared_ptr<dev::p2p::P2PInterface> _p2pService,
         std::shared_ptr<dev::blockchain::BlockChainInterface> _blockChain,
-        int16_t const& _protocolId, uint64_t const& _limit = 102400)
+        PROTOCOL_ID const& _protocolId, uint64_t const& _limit = 102400)
       : m_service(_p2pService),
         m_blockChain(_blockChain),
         m_limit(_limit),
@@ -69,7 +74,7 @@ public:
         /// register enqueue interface to p2p by protocalID
         m_service->registerHandlerByProtoclID(
             m_protocolId, boost::bind(&TxPool::enqueue, this, _1, _2, _3));
-        m_nonceCheck = std::make_shared<dev::eth::NonceCheck>(m_blockChain);
+        m_nonceCheck = std::make_shared<dev::eth::NonceCheck>(m_blockChain, m_protocolId);
     }
 
     virtual ~TxPool() { clear(); }
@@ -87,16 +92,21 @@ public:
      * @param _txHash: transaction hash
      */
     bool drop(h256 const& _txHash) override;
+    bool dropBlockTrans(Block const& block) override;
     /**
      * @brief Get top transactions from the queue
      *
      * @param _limit : _limit Max number of transactions to return.
      * @param _avoid : Transactions to avoid returning.
+     * @param _condition : The function return false to avoid transaction to return.
      * @return Transactions : up to _limit transactions
      */
-    Transactions topTransactions(
-        uint64_t const& _limit, h256Hash& _avoid, bool update_void = false) override;
-    virtual dev::eth::Transactions topTransactions(uint64_t const& _limit);
+    virtual Transactions topTransactions(uint64_t const& _limit) override;
+    virtual Transactions topTransactions(
+        uint64_t const& _limit, h256Hash& _avoid, bool _updateAvoid = false) override;
+    virtual Transactions topTransactionsCondition(uint64_t const& _limit,
+        std::function<bool(Transaction const&)> const& _condition = nullptr) override;
+
     /// get all transactions(maybe blocksync module need this interface)
     Transactions pendingList() const override;
     /// get current transaction num
@@ -106,10 +116,19 @@ public:
     TxPoolStatus status() const override;
 
     /// protocol id used when register handler to p2p module
-    virtual int16_t const& getProtocolId() const { return m_protocolId; }
+    virtual PROTOCOL_ID const& getProtocolId() const { return m_protocolId; }
     virtual void setMaxBlockLimit(u256 const& _maxBlockLimit) { m_maxBlockLimit = _maxBlockLimit; }
     virtual const u256 maxBlockLimit() const { return m_maxBlockLimit; }
     void setTxPoolLimit(uint64_t const& _limit) { m_limit = _limit; }
+
+    /// Set transaction is known by a node
+    virtual void transactionIsKonwnBy(h256 const& _txHash, h512 const& _nodeId) override;
+
+    /// Is the transaction is known by the node ?
+    virtual bool isTransactionKonwnBy(h256 const& _txHash, h512 const& _nodeId) override;
+
+    /// Is the transaction is known by someone
+    virtual bool isTransactionKonwnBySomeone(h256 const& _txHash) override;
 
 protected:
     /**
@@ -137,19 +156,25 @@ protected:
     void clear();
 
 private:
-    bool removeTrans(h256 const& _txHash);
+    dev::eth::LocalisedTransactionReceipt::Ptr constructTransactionReceipt(Transaction const& tx,
+        dev::eth::TransactionReceipt const& receipt, Block const& block, unsigned index);
+
+    bool removeTrans(h256 const& _txHash, bool needTriggerCallback = false,
+        dev::eth::LocalisedTransactionReceipt::Ptr pReceipt = nullptr);
+    bool removeOutOfBound(h256 const& _txHash);
     void insert(Transaction const& _tx);
+    void removeTransactionKnowBy(h256 const& _txHash);
 
 private:
     /// p2p module
-    std::shared_ptr<dev::p2p::Service> m_service;
+    std::shared_ptr<dev::p2p::P2PInterface> m_service;
     std::shared_ptr<dev::blockchain::BlockChainInterface> m_blockChain;
     std::shared_ptr<dev::eth::NonceCheck> m_nonceCheck;
     /// Max number of pending transactions
     uint64_t m_limit;
     mutable SharedMutex m_lock;
     /// protocolId
-    int16_t m_protocolId;
+    PROTOCOL_ID m_protocolId;
     /// max block limit
     u256 m_maxBlockLimit = u256(1000);
     /// transaction queue
@@ -160,6 +185,10 @@ private:
     h256Hash m_known;
     /// hash of dropped transactions
     h256Hash m_dropped;
-};  // namespace txpool
+
+    /// Transaction is known by some peers
+    mutable SharedMutex x_transactionKnownBy;
+    std::unordered_map<h256, std::set<h512>> m_transactionKnownBy;
+};
 }  // namespace txpool
 }  // namespace dev

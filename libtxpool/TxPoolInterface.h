@@ -22,6 +22,9 @@
  * @date: 2018-09-21
  */
 #pragma once
+#include <libethcore/Block.h>
+#include <libethcore/Common.h>
+#include <libethcore/Protocol.h>
 #include <libethcore/Transaction.h>
 namespace dev
 {
@@ -39,17 +42,24 @@ public:
      * @param _txHash: transaction hash
      */
     virtual bool drop(h256 const& _txHash) = 0;
+    virtual bool dropBlockTrans(dev::eth::Block const& block) = 0;
     /**
      * @brief Get top transactions from the queue
      *
      * @param _limit : _limit Max number of transactions to return.
      * @param _avoid : Transactions to avoid returning.
+     * @param _condition : The function return false to avoid transaction to return.
      * @return Transactions : up to _limit transactions
      */
-    virtual dev::eth::Transactions topTransactions(
-        uint64_t const& _limit, h256Hash& _avoid, bool updateAvoid = false) = 0;
-
     virtual dev::eth::Transactions topTransactions(uint64_t const& _limit) = 0;
+    virtual dev::eth::Transactions topTransactions(
+        uint64_t const& _limit, h256Hash& _avoid, bool _updateAvoid = false) = 0;
+    virtual dev::eth::Transactions topTransactionsCondition(uint64_t const& _limit,
+        std::function<bool(dev::eth::Transaction const&)> const& _condition = nullptr)
+    {
+        return dev::eth::Transactions();
+    };
+
     /// get all current transactions(maybe blocksync module need this interface)
     virtual dev::eth::Transactions pendingList() const = 0;
     /// get current transaction num
@@ -77,7 +87,28 @@ public:
     virtual TxPoolStatus status() const = 0;
 
     /// protocol id used when register handler to p2p module
-    virtual int16_t const& getProtocolId() const = 0;
+    virtual PROTOCOL_ID const& getProtocolId() const = 0;
+
+    /// Set transaction is known by a node
+    virtual void transactionIsKonwnBy(h256 const& _txHash, h512 const& _nodeId){};
+
+    /// Is the transaction is known by the node ?
+    virtual bool isTransactionKonwnBy(h256 const& _txHash, h512 const& _nodeId) { return false; };
+
+    /// Is the transaction is known by someone
+    virtual bool isTransactionKonwnBySomeone(h256 const& _txHash) { return false; };
+
+    /// Register a handler that will be called once there is a new transaction imported
+    template <class T>
+    dev::eth::Handler<> onReady(T const& _t)
+    {
+        return m_onReady.add(_t);
+    }
+
+protected:
+    ///< Called when a subsequent call to import transactions will return a non-empty container. Be
+    ///< nice and exit fast.
+    dev::eth::Signal<> m_onReady;
 };
 }  // namespace txpool
 }  // namespace dev

@@ -39,35 +39,26 @@ class FakeBlock
 {
 public:
     /// for normal case test
-    FakeBlock(size_t size)
+    FakeBlock(size_t size, Secret const& sec = KeyPair::create().secret())
     {
+        m_sec = sec;
         FakeBlockHeader();
         FakeSigList(size);
         FakeTransaction(size);
         m_block.setSigList(m_sigList);
         m_block.setTransactions(m_transaction);
+        m_block.setBlockHeader(m_blockHeader);
         BOOST_CHECK(m_transaction == m_block.transactions());
         BOOST_CHECK(m_sigList == m_block.sigList());
-        m_blockHeaderData.clear();
-        m_blockData.clear();
-        m_blockHeader.encode(m_blockHeaderData);
-        m_block.encode(m_blockData, ref(m_blockHeaderData));
-        m_block.decode(ref(m_blockData));
-    }
-
-    void reEncodeDecode()
-    {
-        m_blockHeader.encode(m_blockHeaderData);
-        m_block.encode(m_blockData, ref(m_blockHeaderData));
-        m_block.decode(ref(m_blockData));
+        BOOST_CHECK(m_blockHeader = m_block.header());
+        m_block.encode(m_blockData);
     }
 
     /// for empty case test
     FakeBlock()
     {
-        m_blockHeader.encode(m_blockHeaderData);
-        m_block.encode(m_blockData, ref(m_blockHeaderData));
-        m_block.decode(ref(m_blockData));
+        m_block.setBlockHeader(m_blockHeader);
+        m_block.encode(m_blockData);
     }
 
     /// fake invalid block data
@@ -99,15 +90,12 @@ public:
     void CheckInvalidBlockData(size_t size)
     {
         FakeBlockHeader();
+        m_block.setBlockHeader(m_blockHeader);
         BOOST_CHECK_THROW(m_block.decode(ref(m_blockHeaderData)), InvalidBlockFormat);
-        BOOST_REQUIRE_NO_THROW(m_block.encode(m_blockData, ref(m_blockHeaderData)));
-        m_blockHeader.setGasUsed(u256(3000000000));
+        BOOST_REQUIRE_NO_THROW(m_block.encode(m_blockData));
+        m_block.header().setGasUsed(u256(3000000000));
         m_blockHeader.encode(m_blockHeaderData);
-        BOOST_CHECK_THROW(m_block.encode(m_blockData, ref(m_blockHeaderData)), TooMuchGasUsed);
-        m_blockHeaderData[0] += 1;
-        /// construct block header failed, invalid rlp
-        BOOST_CHECK_THROW(m_block.encode(m_blockData, ref(m_blockHeaderData)), std::exception);
-        m_blockHeaderData[0] -= 1;
+        BOOST_CHECK_THROW(m_block.encode(m_blockData), TooMuchGasUsed);
         /// construct invalid block format
         for (size_t i = 1; i < 3; i++)
         {
@@ -125,14 +113,14 @@ public:
         m_blockHeader.setNumber(int64_t(0));
         m_blockHeader.setGasLimit(u256(3000000));
         m_blockHeader.setGasUsed(u256(100000));
-        uint64_t current_time = utcTime();
+        uint64_t current_time = 100000;  // utcTime();
         m_blockHeader.setTimestamp(current_time);
         m_blockHeader.appendExtraDataArray(jsToBytes("0x1020"));
-        m_blockHeader.setSealer(u256("0x00"));
+        m_blockHeader.setSealer(u256(12));
         std::vector<h512> sealer_list;
         for (unsigned int i = 0; i < 10; i++)
         {
-            sealer_list.push_back(toPublic(Secret::random()));
+            sealer_list.push_back(toPublic(Secret(h256(i))));
         }
         m_blockHeader.setSealerList(sealer_list);
     }
@@ -143,12 +131,11 @@ public:
         /// set sig list
         Signature sig;
         h256 block_hash;
-        Secret sec = KeyPair::create().secret();
         m_sigList.clear();
         for (size_t i = 0; i < size; i++)
         {
             block_hash = sha3(toString("block " + i));
-            sig = sign(sec, block_hash);
+            sig = sign(m_sec, block_hash);
             m_sigList.push_back(std::make_pair(u256(block_hash), sig));
         }
     }
@@ -156,10 +143,10 @@ public:
     /// fake transactions
     void FakeTransaction(size_t size)
     {
-        fakeSingleTransaction();
         RLPStream txs;
         txs.appendList(size);
         m_transaction.resize(size);
+        fakeSingleTransaction();
         for (size_t i = 0; i < size; i++)
         {
             m_transaction[i] = m_singleTransaction;
@@ -173,18 +160,16 @@ public:
     /// fake single transaction
     void fakeSingleTransaction()
     {
-        bytes rlpBytes = fromHex(
-            "f8ac8401be1a7d80830f4240941dc8def0867ea7e3626e03acee3eb40ee17251c880b84494e78a10000000"
-            "0000"
-            "000000000000003ca576d469d7aa0244071d27eb33c5629753593e00000000000000000000000000000000"
-            "0000"
-            "00000000000000000000000013881ba0f44a5ce4a1d1d6c2e4385a7985cdf804cb10a7fb892e9c08ff6d62"
-            "657c"
-            "4da01ea01d4c2af5ce505f574a320563ea9ea55003903ca5d22140155b3c2c968df050948203ea");
-
-        RLP rlpObj(rlpBytes);
-        bytesConstRef d = rlpObj.data();
-        m_singleTransaction = Transaction(d, eth::CheckTransaction::Everything);
+        u256 value = u256(100);
+        u256 gas = u256(100000000);
+        u256 gasPrice = u256(0);
+        Address dst;
+        std::string str = "test transaction";
+        bytes data(str.begin(), str.end());
+        m_singleTransaction = Transaction(value, gasPrice, gas, dst, data, 2);
+        SignatureStruct sig = dev::sign(m_sec, m_singleTransaction.sha3(WithoutSignature));
+        /// update the signature of transaction
+        m_singleTransaction.updateSignature(sig);
     }
 
     Block& getBlock() { return m_block; }
@@ -193,6 +178,7 @@ public:
     bytes& getBlockData() { return m_blockData; }
 
 public:
+    Secret m_sec;
     Block m_block;
     BlockHeader m_blockHeader;
     Transactions m_transaction;

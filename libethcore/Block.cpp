@@ -29,12 +29,12 @@ namespace dev
 {
 namespace eth
 {
-Block::Block(bytesConstRef _data) : m_currentBytes(_data.toBytes())
+Block::Block(bytesConstRef _data)
 {
     decode(_data);
 }
 
-Block::Block(bytes const& _data) : m_currentBytes(_data)
+Block::Block(bytes const& _data)
 {
     decode(ref(_data));
 }
@@ -43,12 +43,8 @@ Block::Block(Block const& _block)
   : m_blockHeader(_block.blockHeader()),
     m_transactions(_block.transactions()),
     m_transactionReceipts(_block.transactionReceipts()),
-    m_headerHash(_block.headerHash()),
     m_sigList(_block.sigList()),
-    m_currentBytes(_block.m_currentBytes),
-    m_txsCache(_block.m_txsCache),
-    m_txsMapCache(_block.m_txsMapCache),
-    m_txsRoot(_block.m_txsRoot)
+    m_txsCache(_block.m_txsCache)
 {
     noteChange();
 }
@@ -56,53 +52,15 @@ Block::Block(Block const& _block)
 Block& Block::operator=(Block const& _block)
 {
     m_blockHeader = _block.blockHeader();
-    m_headerHash = _block.headerHash();
     /// init transactions
     m_transactions = _block.transactions();
     /// init transactionReceipts
     m_transactionReceipts = _block.transactionReceipts();
     /// init sigList
     m_sigList = _block.sigList();
-    /// init m_currentBytes
-    m_currentBytes = _block.m_currentBytes;
     m_txsCache = _block.m_txsCache;
-    m_txsMapCache = _block.m_txsMapCache;
-    m_txsRoot = _block.m_txsRoot;
     noteChange();
     return *this;
-}
-
-/**
- * @brief : trans the members of Block into Blocks using RLP encode
- *
- * @param _out : generated block
- * @param sig_list: signature list
- */
-void Block::encode(bytes& _out, std::vector<std::pair<u256, Signature>>& sig_list)
-{
-    /// verify blockheader
-    m_blockHeader.verify(CheckEverything);
-    /// get bytes of BlockHeader
-    bytes header_bytes;
-    m_blockHeader.encode(header_bytes);
-    encode(_out, ref(header_bytes), m_blockHeader.hash(), sig_list);
-}
-
-/**
- * @brief : generate block using specified block header and sig_list
- *
- * @param _out : encoded bytes(use rlp encode)
- * @param _header : specified block header to generate the block
- * @param sig_list : signature list
- */
-void Block::encode(
-    bytes& _out, bytesConstRef _header, std::vector<std::pair<u256, Signature>>& sig_list)
-{
-    /// check validition of block header before encode
-    /// _header data validition has already been checked in "populate of BlockHeader"
-    BlockHeader tmpBlockHeader = BlockHeader(_header, HeaderData);
-    tmpBlockHeader.verify(CheckEverything);
-    encode(_out, _header, tmpBlockHeader.hash(), sig_list);
 }
 
 /**
@@ -113,33 +71,39 @@ void Block::encode(
  * @param hash : hash of the block hash
  * @param sig_list : signature list
  */
-void Block::encode(bytes& _out, bytesConstRef block_header, h256 const& hash,
-    std::vector<std::pair<u256, Signature>>& sig_list)
+void Block::encode(bytes& _out) const
 {
-    /// refresh transaction list cache
-    bytes txsCache = encodeTransactions();
+    m_blockHeader.verify();
+    calTransactionRoot(false);
+    calReceiptRoot(false);
+    bytes headerData;
+    m_blockHeader.encode(headerData);
     /// get block RLPStream
     RLPStream block_stream;
-    block_stream.appendList(4);
+    block_stream.appendList(5);
     // append block header
-    block_stream.appendRaw(block_header);
+    block_stream.appendRaw(headerData);
     // append transaction list
-    block_stream.appendRaw(txsCache);
+    block_stream.appendRaw(m_txsCache);
+    // append transactionReceipts list
+    block_stream.appendRaw(m_tReceiptsCache);
     // append block hash
-    block_stream.append(hash);
+    block_stream.append(m_blockHeader.hash());
     // append sig_list
-    block_stream.appendVector(sig_list);
+    block_stream.appendVector(m_sigList);
     block_stream.swapOut(_out);
 }
 
+
 /// encode transactions to bytes using rlp-encoding when transaction list has been changed
-bytes const& Block::encodeTransactions()
+void Block::calTransactionRoot(bool update) const
 {
+    WriteGuard l(x_txsCache);
     RLPStream txs;
     txs.appendList(m_transactions.size());
     if (m_txsCache == bytes())
     {
-        m_txsMapCache.clear();
+        BytesMap txsMapCache;
         for (size_t i = 0; i < m_transactions.size(); i++)
         {
             RLPStream s;
@@ -147,12 +111,40 @@ bytes const& Block::encodeTransactions()
             bytes trans_data;
             m_transactions[i].encode(trans_data);
             txs.appendRaw(trans_data);
-            m_txsMapCache.insert(std::make_pair(s.out(), trans_data));
+            txsMapCache.insert(std::make_pair(s.out(), trans_data));
         }
         txs.swapOut(m_txsCache);
+        m_transRootCache = hash256(txsMapCache);
     }
-    m_txsRoot = hash256(m_txsMapCache);
-    return m_txsCache;
+    if (update == true)
+        m_blockHeader.setTransactionsRoot(m_transRootCache);
+}
+
+/// encode transactionReceipts to bytes using rlp-encoding when transaction list has been changed
+void Block::calReceiptRoot(bool update) const
+{
+    WriteGuard l(x_txReceiptsCache);
+    if (m_tReceiptsCache == bytes())
+    {
+        RLPStream txReceipts;
+        txReceipts.appendList(m_transactionReceipts.size());
+        BytesMap mapCache;
+        for (size_t i = 0; i < m_transactionReceipts.size(); i++)
+        {
+            RLPStream s;
+            s << i;
+            bytes tranReceipts_data;
+            m_transactionReceipts[i].encode(tranReceipts_data);
+            txReceipts.appendRaw(tranReceipts_data);
+            mapCache.insert(std::make_pair(s.out(), tranReceipts_data));
+        }
+        txReceipts.swapOut(m_tReceiptsCache);
+        m_receiptRootCache = hash256(mapCache);
+    }
+    if (update == true)
+    {
+        m_blockHeader.setReceiptsRoot(m_receiptRootCache);
+    }
 }
 
 /**
@@ -173,11 +165,21 @@ void Block::decode(bytesConstRef _block_bytes)
     {
         m_transactions[i].decode(transactions_rlp[i]);
     }
-    /// get hash of the block header
-    m_headerHash = block_rlp[2].toHash<h256>(RLP::VeryStrict);
+    /// get transactionReceipt list
+    RLP transactionReceipts_rlp = block_rlp[2];
+    m_transactionReceipts.resize(transactionReceipts_rlp.itemCount());
+    for (size_t i = 0; i < transactionReceipts_rlp.itemCount(); i++)
+    {
+        m_transactionReceipts[i].decode(transactionReceipts_rlp[i]);
+    }
+    /// get hash
+    h256 hash = block_rlp[3].toHash<h256>();
+    if (hash != m_blockHeader.hash())
+    {
+        BOOST_THROW_EXCEPTION(ErrorBlockHash() << errinfo_comment("BlockHeader hash error"));
+    }
     /// get sig_list
-    m_sigList = block_rlp[3].toVector<std::pair<u256, Signature>>();
-    m_currentBytes = _block_bytes.toBytes();
+    m_sigList = block_rlp[4].toVector<std::pair<u256, Signature>>();
     noteChange();
 }
 }  // namespace eth

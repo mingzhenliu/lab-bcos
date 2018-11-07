@@ -33,7 +33,23 @@ namespace test
 /// simple fake of blocksync
 class FakeBlockverifier : public BlockVerifierInterface
 {
-    std::shared_ptr<ExecutiveContext> executeBlock(dev::eth::Block& block) override {}
+public:
+    std::shared_ptr<ExecutiveContext> executeBlock(
+        dev::eth::Block& block, dev::h256 const& parentStateRoot) override
+    {
+        return m_execContext;
+    }
+    virtual std::pair<dev::executive::ExecutionResult, dev::eth::TransactionReceipt>
+    executeTransaction(const dev::eth::BlockHeader& blockHeader, dev::eth::Transaction const& _t)
+    {
+        dev::executive::ExecutionResult res;
+        dev::eth::TransactionReceipt reciept;
+        return std::make_pair(res, reciept);
+    }
+
+
+private:
+    std::shared_ptr<ExecutiveContext> m_execContext;
 };
 }  // namespace test
 }  // namespace dev

@@ -29,23 +29,14 @@
 using namespace dev;
 using namespace dev::storage;
 
-TableInfo::Ptr LevelDBStorage::info(const std::string& table)
-{
-    TableInfo::Ptr tableInfo = std::make_shared<TableInfo>();
-    tableInfo->name = table;
-
-    return tableInfo;
-}
-
 Entries::Ptr LevelDBStorage::select(
     h256 hash, int num, const std::string& table, const std::string& key)
 {
     try
     {
-        LOG(DEBUG) << "Query leveldb data";
-
         std::string entryKey = table + "_" + key;
         std::string value;
+        ReadGuard l(m_remoteDBMutex);
         auto s = m_db->Get(leveldb::ReadOptions(), leveldb::Slice(entryKey), &value);
         if (!s.ok() && !s.IsNotFound())
         {
@@ -64,9 +55,6 @@ Entries::Ptr LevelDBStorage::select(
             Json::Value valueJson;
             ssIn >> valueJson;
 
-            std::string blockHash = valueJson["blockHash"].asString();
-            int num = valueJson["num"].asInt();
-
             Json::Value values = valueJson["values"];
             for (auto it = values.begin(); it != values.end(); ++it)
             {
@@ -77,8 +65,11 @@ Entries::Ptr LevelDBStorage::select(
                     entry->setField(valueIt.key().asString(), valueIt->asString());
                 }
 
-                entry->setDirty(false);
-                entries->addEntry(entry);
+                if (entry->getStatus() == 0)
+                {
+                    entry->setDirty(false);
+                    entries->addEntry(entry);
+                }
             }
         }
 
@@ -109,8 +100,6 @@ size_t LevelDBStorage::commit(
                 std::string entryKey = it->tableName + "_" + dataIt.first;
 
                 Json::Value entry;
-                entry["blockHash"] = hash.hex();
-                entry["num"] = num;
 
                 for (size_t i = 0; i < dataIt.second->size(); ++i)
                 {
@@ -119,6 +108,8 @@ size_t LevelDBStorage::commit(
                     {
                         value[fieldIt.first] = fieldIt.second;
                     }
+                    value["_hash_"] = hash.hex();
+                    value["_num_"] = num;
                     entry["values"].append(value);
                 }
 
@@ -127,14 +118,13 @@ size_t LevelDBStorage::commit(
 
                 batch.Put(leveldb::Slice(entryKey), leveldb::Slice(ssOut.str()));
                 ++total;
-
-                LOG(TRACE) << "leveldb commit key:" << entryKey << " value:" << ssOut.str();
+                /// LOG(TRACE) << "leveldb commit key:" << entryKey;
             }
         }
 
         leveldb::WriteOptions writeOptions;
         writeOptions.sync = false;
-
+        WriteGuard l(m_remoteDBMutex);
         auto s = m_db->Write(writeOptions, &batch);
         if (!s.ok())
         {

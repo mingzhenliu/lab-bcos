@@ -22,7 +22,6 @@
 
 #include "Storage.h"
 #include "Table.h"
-#include "libdevcore/Address.h"
 
 namespace dev
 {
@@ -36,33 +35,34 @@ class MemoryTableFactory : public StateDBFactory
 {
 public:
     typedef std::shared_ptr<MemoryTableFactory> Ptr;
-
+    MemoryTableFactory();
     virtual ~MemoryTableFactory() {}
 
-    Table::Ptr openTable(h256 blockHash, int64_t num, const std::string& table) override;
-    Table::Ptr createTable(h256 blockHash, int64_t num, const std::string& tableName,
-        const std::string& keyField, const std::vector<std::string>& valueField) override;
+    Table::Ptr openTable(const std::string& table) override;
+    Table::Ptr createTable(const std::string& tableName, const std::string& keyField,
+        const std::string& valueField) override;
 
     virtual Storage::Ptr stateStorage() { return m_stateStorage; }
     virtual void setStateStorage(Storage::Ptr stateStorage) { m_stateStorage = stateStorage; }
 
     void setBlockHash(h256 blockHash);
-    void setBlockNum(int blockNum);
-    Address getTable(const std::string& tableName);
-    void insertTable(const std::string& _tableName, const Address& _address);
-    h256 hash(std::shared_ptr<blockverifier::ExecutiveContext> context);
+    void setBlockNum(int64_t blockNum);
+
+    h256 hash();
     size_t savepoint() const { return m_changeLog.size(); };
     void rollback(size_t _savepoint);
     void commit();
-    void commitDB(std::shared_ptr<blockverifier::ExecutiveContext> context, bool commit);
+    void commitDB(h256 const& _blockHash, int64_t _blockNumber);
 
 private:
+    storage::TableInfo::Ptr getSysTableInfo(const std::string& tableName);
     Storage::Ptr m_stateStorage;
     h256 m_blockHash;
     int m_blockNum;
-    std::map<std::string, Address> m_name2Table;
+    std::map<std::string, Table::Ptr> m_name2Table;
     std::vector<Change> m_changeLog;
     h256 m_hash;
+    std::vector<std::string> m_sysTables;
 };
 
 }  // namespace storage

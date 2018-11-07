@@ -19,7 +19,7 @@
  *  @date 20180921
  */
 #include "MemoryTable.h"
-
+#include "Common.h"
 #include "Table.h"
 #include <json/json.h>
 #include <libdevcore/easylog.h>
@@ -31,27 +31,23 @@ using namespace dev::storage;
 
 void dev::storage::MemoryTable::init(const std::string& tableName)
 {
-    LOG(DEBUG) << "Init MemoryTable:" << tableName;
-
-    m_tableInfo = m_remoteDB->info(tableName);
+    /// LOG(DEBUG) << "Init MemoryTable:" << tableName;
 }
 
 Entries::Ptr dev::storage::MemoryTable::select(const std::string& key, Condition::Ptr condition)
 {
     try
     {
-        LOG(DEBUG) << "Select MemoryTable: " << key;
-
         Entries::Ptr entries = std::make_shared<Entries>();
 
         auto it = m_cache.find(key);
         if (it == m_cache.end())
         {
-            if (m_remoteDB.get() != NULL)
+            if (m_remoteDB)
             {
                 entries = m_remoteDB->select(m_blockHash, m_blockNum, m_tableInfo->name, key);
 
-                LOG(DEBUG) << "AMOPDB selects:" << entries->size() << " record(s)";
+                /// LOG(DEBUG) << "AMOPDB selects:" << entries->size() << " record(s)";
 
                 m_cache.insert(std::make_pair(key, entries));
             }
@@ -61,11 +57,10 @@ Entries::Ptr dev::storage::MemoryTable::select(const std::string& key, Condition
             entries = it->second;
         }
 
-        if (entries.get() == NULL)
+        if (!entries)
         {
             LOG(ERROR) << "Can't find data";
-
-            return entries;
+            return Entries::Ptr();
         }
         auto indexes = processEntries(entries, condition);
         Entries::Ptr resultEntries = std::make_shared<Entries>();
@@ -95,11 +90,11 @@ size_t dev::storage::MemoryTable::update(
         auto it = m_cache.find(key);
         if (it == m_cache.end())
         {
-            if (m_remoteDB.get() != NULL)
+            if (m_remoteDB)
             {
                 entries = m_remoteDB->select(m_blockHash, m_blockNum, m_tableInfo->name, key);
 
-                LOG(DEBUG) << "AMOPDB selects:" << entries->size() << " record(s)";
+                /// LOG(DEBUG) << "AMOPDB selects:" << entries->size() << " record(s)";
 
                 m_cache.insert(std::make_pair(key, entries));
             }
@@ -109,13 +104,13 @@ size_t dev::storage::MemoryTable::update(
             entries = it->second;
         }
 
-        if (entries.get() == NULL)
+        if (!entries)
         {
             LOG(ERROR) << "Can't find data";
 
             return 0;
         }
-
+        checkFiled(entry);
         auto indexes = processEntries(entries, condition);
         std::vector<Change::Record> records;
 
@@ -124,10 +119,7 @@ size_t dev::storage::MemoryTable::update(
             Entry::Ptr updateEntry = entries->get(i);
             for (auto it : *(entry->fields()))
             {
-                std::string value;
-
                 records.emplace_back(i, it.first, updateEntry->getField(it.first));
-
                 updateEntry->setField(it.first, it.second);
             }
         }
@@ -139,7 +131,7 @@ size_t dev::storage::MemoryTable::update(
     }
     catch (std::exception& e)
     {
-        LOG(ERROR) << "Access DB failed for:" << e.what();
+        LOG(ERROR) << "Access MemoryTable failed for:" << e.what();
     }
 
     return 0;
@@ -157,11 +149,11 @@ size_t dev::storage::MemoryTable::insert(const std::string& key, Entry::Ptr entr
         auto it = m_cache.find(key);
         if (it == m_cache.end())
         {
-            if (m_remoteDB.get() != NULL)
+            if (m_remoteDB)
             {
                 entries = m_remoteDB->select(m_blockHash, m_blockNum, m_tableInfo->name, key);
 
-                LOG(DEBUG) << "AMOPDB selects:" << entries->size() << " record(s)";
+                /// LOG(DEBUG) << "AMOPDB selects:" << entries->size() << " record(s)";
 
                 m_cache.insert(std::make_pair(key, entries));
             }
@@ -170,27 +162,25 @@ size_t dev::storage::MemoryTable::insert(const std::string& key, Entry::Ptr entr
         {
             entries = it->second;
         }
+        checkFiled(entry);
         Change::Record record(entries->size() + 1u);
         std::vector<Change::Record> value{record};
         m_recorder(shared_from_this(), Change::Insert, key, value);
         if (entries->size() == 0)
         {
             entries->addEntry(entry);
-
             m_cache.insert(std::make_pair(key, entries));
-
             return 1;
         }
         else
         {
             entries->addEntry(entry);
-
             return 1;
         }
     }
     catch (std::exception& e)
     {
-        LOG(ERROR) << "Access DB failed";
+        LOG(ERROR) << "Access MemoryTable failed for:" << e.what();
     }
 
     return 1;
@@ -205,7 +195,7 @@ size_t dev::storage::MemoryTable::remove(const std::string& key, Condition::Ptr 
     auto it = m_cache.find(key);
     if (it == m_cache.end())
     {
-        if (m_remoteDB.get() != NULL)
+        if (m_remoteDB)
         {
             entries = m_remoteDB->select(m_blockHash, m_blockNum, m_tableInfo->name, key);
 
@@ -233,7 +223,7 @@ size_t dev::storage::MemoryTable::remove(const std::string& key, Condition::Ptr 
 
     entries->setDirty(true);
 
-    return 1;
+    return indexes.size();
 }
 
 h256 dev::storage::MemoryTable::hash()
@@ -250,13 +240,11 @@ h256 dev::storage::MemoryTable::hash()
                 {
                     for (auto fieldIt : *(it.second->get(i)->fields()))
                     {
-                        data.insert(data.end(), fieldIt.first.begin(), fieldIt.first.end());
-
-                        data.insert(data.end(), fieldIt.second.begin(), fieldIt.second.end());
-
-                        // std::string status =
-                        // boost::lexical_cast<std::string>(fieldIt.second->getStatus());
-                        // data.insert(data.end(), status.begin(), status.end());
+                        if (isHashField(fieldIt.first))
+                        {
+                            data.insert(data.end(), fieldIt.first.begin(), fieldIt.first.end());
+                            data.insert(data.end(), fieldIt.second.begin(), fieldIt.second.end());
+                        }
                     }
                 }
             }
@@ -294,8 +282,11 @@ void dev::storage::MemoryTable::setStateStorage(Storage::Ptr amopDB)
 std::vector<size_t> MemoryTable::processEntries(Entries::Ptr entries, Condition::Ptr condition)
 {
     std::vector<size_t> indexes;
+    indexes.reserve(entries->size());
     if (condition->getConditions()->empty())
     {
+        for (size_t i = 0; i < entries->size(); ++i)
+            indexes.emplace_back(i);
         return indexes;
     }
 
@@ -414,4 +405,36 @@ void MemoryTable::setBlockHash(h256 blockHash)
 void MemoryTable::setBlockNum(int blockNum)
 {
     m_blockNum = blockNum;
+}
+
+bool MemoryTable::isHashField(const std::string& _key)
+{
+    if (!_key.empty())
+    {
+        return ((_key.substr(0, 1) != "_" && _key.substr(_key.size() - 1, 1) != "_") ||
+                (_key == STATUS));
+    }
+    else
+    {
+        LOG(ERROR) << "Empty key error.";
+        return false;
+    }
+}
+
+void MemoryTable::setTableInfo(TableInfo::Ptr _tableInfo)
+{
+    m_tableInfo = _tableInfo;
+}
+
+void MemoryTable::checkFiled(Entry::Ptr entry)
+{
+    for (auto& it : *(entry->fields()))
+    {
+        if (m_tableInfo->fields.end() ==
+            find(m_tableInfo->fields.begin(), m_tableInfo->fields.end(), it.first))
+        {
+            LOG(ERROR) << "table:" << m_tableInfo->name << " doesn't have field:" << it.first;
+            throw std::invalid_argument("Invalid key.");
+        }
+    }
 }

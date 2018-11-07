@@ -18,11 +18,10 @@
 #include <libethcore/Exceptions.h>
 #include <libethcore/LastBlockHashesFace.h>
 #include <libevm/EVMC.h>
-#include <libexecutivecontext/ExtVM.h>
-#include <libexecutivecontext/MPTState.h>
-#include <libexecutivecontext/StateFace.h>
-#include <libexecutivecontext/StorageState.h>
+#include <libexecutive/ExtVM.h>
+#include <libexecutive/StateFace.h>
 #include <libinterpreter/interpreter.h>
+#include <libmptstate/MPTState.h>
 #include <test/tools/libutils/TestOutputHelper.h>
 #include <boost/test/unit_test.hpp>
 
@@ -30,6 +29,8 @@ using namespace std;
 using namespace dev;
 using namespace dev::test;
 using namespace dev::eth;
+using namespace dev::mptstate;
+using namespace dev::executive;
 
 
 namespace
@@ -57,10 +58,12 @@ class Create2TestFixture : public TestOutputHelperFixture
 public:
     explicit Create2TestFixture(VMFace* _vm)
       : vm{_vm},
-        mptState(u256(0), MPTState::openDB("./", h256("0x2234")), BaseState::Empty),
+        mptState(std::make_shared<MPTState>(
+            u256(0), MPTState::openDB("./", h256("0x2234")), BaseState::Empty)),
+
         state(mptState)
     {
-        state.addBalance(address, 1 * ether);
+        state->addBalance(address, 1 * ether);
     }
 
     void testCreate2worksInConstantinople()
@@ -70,30 +73,30 @@ public:
 
         vm->exec(gas, extVm, OnOpFunc{});
 
-        BOOST_REQUIRE(state.addressHasCode(expectedAddress));
+        BOOST_REQUIRE(state->addressHasCode(expectedAddress));
     }
 
     void testCreate2succeedsIfAddressHasEther()
     {
-        state.addBalance(expectedAddress, 1 * ether);
+        state->addBalance(expectedAddress, 1 * ether);
 
         ExtVM extVm(state, envInfo, address, address, address, value, gasPrice, ref(inputData),
             ref(code), sha3(code), depth, isCreate, staticCall);
 
         vm->exec(gas, extVm, OnOpFunc{});
 
-        BOOST_REQUIRE(state.addressHasCode(expectedAddress));
+        BOOST_REQUIRE(state->addressHasCode(expectedAddress));
     }
 
     void testCreate2doesntChangeContractIfAddressExists()
     {
-        state.setCode(expectedAddress, bytes{inputData});
+        state->setCode(expectedAddress, bytes{inputData});
 
         ExtVM extVm(state, envInfo, address, address, address, value, gasPrice, ref(inputData),
             ref(code), sha3(code), depth, isCreate, staticCall);
 
         vm->exec(gas, extVm, OnOpFunc{});
-        BOOST_REQUIRE(state.code(expectedAddress) == inputData);
+        BOOST_REQUIRE(state->code(expectedAddress) == inputData);
     }
 
     void testCreate2isForbiddenInStaticCall()
@@ -111,8 +114,9 @@ public:
     static dev::h256 fakeCallBack(int64_t x) { return h256(); }
     EnvInfo envInfo{blockHeader, fakeCallBack, 0};
     Address address{KeyPair::create().address()};
-    MPTState mptState;
-    StateFace& state;
+
+    std::shared_ptr<MPTState> mptState;
+    std::shared_ptr<StateFace> state;
 
     u256 value = 0;
     u256 gasPrice = 1;
@@ -149,11 +153,13 @@ class ExtcodehashTestFixture : public TestOutputHelperFixture
 public:
     explicit ExtcodehashTestFixture(VMFace* _vm)
       : vm{_vm},
-        mptState(u256(0), MPTState::openDB("./", h256("0x2234")), BaseState::Empty),
+        mptState(std::make_shared<MPTState>(
+            u256(0), MPTState::openDB("./", h256("0x2234")), BaseState::Empty)),
+
         state(mptState)
     {
-        state.addBalance(address, 1 * ether);
-        state.setCode(extAddress, bytes{extCode});
+        state->addBalance(address, 1 * ether);
+        state->setCode(extAddress, bytes{extCode});
     }
 
     void testExtcodehashWorksInConstantinople()
@@ -193,7 +199,7 @@ public:
     void testExtCodeHashOfNonContractAccount()
     {
         Address addressWithEmptyCode{KeyPair::create().address()};
-        state.addBalance(addressWithEmptyCode, 1 * ether);
+        state->addBalance(addressWithEmptyCode, 1 * ether);
 
         ExtVM extVm(state, envInfo, address, address, address, value, gasPrice,
             addressWithEmptyCode.ref(), ref(code), sha3(code), depth, isCreate, staticCall);
@@ -231,7 +237,7 @@ public:
     void testExtCodeHashOfPrecomileNonZeroBalance()
     {
         Address addressPrecompile{0x1};
-        state.addBalance(addressPrecompile, 1 * ether);
+        state->addBalance(addressPrecompile, 1 * ether);
 
         ExtVM extVm(state, envInfo, address, address, address, value, gasPrice,
             addressPrecompile.ref(), ref(code), sha3(code), depth, isCreate, staticCall);
@@ -268,8 +274,9 @@ public:
     EnvInfo envInfo{blockHeader, fakeCallBack, 0};
     Address address{KeyPair::create().address()};
     Address extAddress{KeyPair::create().address()};
-    MPTState mptState;
-    StateFace& state;
+
+    std::shared_ptr<MPTState> mptState;
+    std::shared_ptr<StateFace> state;
 
     u256 value = 0;
     u256 gasPrice = 1;

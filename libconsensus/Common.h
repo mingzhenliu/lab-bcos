@@ -26,6 +26,9 @@
 #include <libdevcore/FixedHash.h>
 #include <libdevcore/easylog.h>
 #include <libethcore/Block.h>
+#define SEAL_LOG(LEVEL) \
+    LOG(LEVEL) << "[#Seal] [PROTOCOL: " << m_consensusEngine->protocolId() << "] "
+#define ENGINE_LOG(LEVEL) LOG(LEVEL) << "[#ConsensusEngine] [PROTOCOL: " << m_protocolId << "] "
 namespace dev
 {
 namespace consensus
@@ -41,13 +44,6 @@ enum NodeAccountType
     ObserverAccount = 0,
     MinerAccount
 };
-
-struct ConsensusStatus
-{
-    std::string consensusEngine;
-    dev::h512s minerList;
-};
-
 struct Sealing
 {
     dev::eth::Block block;
